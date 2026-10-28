@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.ccaw/
+.validation-tmp/
+.env
+.env.*
+!.env.example
+*.sqlite3*
+*.log
+auth.json
+node_modules/

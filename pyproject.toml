@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ccaw"
+version = "0.3.0"
+description = "Durable, cost-aware Codex workflows with verified engineering lessons"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+license = "MIT"
+license-files = ["LICENSE"]
+
+[project.scripts]
+ccaw = "ccaw.cli:main"
+
+[project.gui-scripts]
+ccaw-gui = "ccaw.gui:main"
+
+[tool.setuptools]
+packages = ["ccaw"]
