@@ -1,10 +1,10 @@
 # CCAW — 未完成项目封存
 
-状态：未完成，开发暂停。此副本用于保存截至 2026-10-28 的原型源码，不代表发布或完成验收。源码版本声明为 0.3.0；下方原有版本描述属于历史说明，以 [封存状态](docs/STATUS.md) 为准。
+状态：未完成，开发暂停。此副本用于保存截至 2026-10-28 的原型源码，不代表正式发行版或完成验收。源码版本声明为 0.3.0；这是实验性原型，未完成产品验收。可选付费 API 默认关闭。详细范围见 [封存状态](docs/STATUS.md)。
 
 # CCAW · 我的工作流
 
-以 Codex 为主执行器的个人工作流工具。当前交付为 **v0.2 命令行版本**，支持 Windows 和 Linux，运行时只需 Python 3.11+ 标准库。
+以 Codex 为主执行器的个人工作流工具。源码声明版本为 **v0.3.0**，主要提供命令行原型，支持 Windows 和 Linux，运行时只需 Python 3.11+ 标准库。
 
 目标是在验收质量不下降的前提下，减少重复推理、重复计算和无效交接，并把经过验证的工程经验用于后续任务。
 
@@ -231,7 +231,7 @@ API 发送的是目标、验收、作业摘要及匹配经验，**不会自动�
 
 本地脚本按你的操作系统账户权限执行；仅运行你已授权、可信的命令。Codex 使用 workspace-write 沙箱，并继承其原有审批设置；需要人工批准的动作可能无法在非交互模式完成。工具不添加任何跳过审批的开关。
 
-当前没有图形界面、开机自启守护服务、远程计算集群、自动根因判断、无人值守全自动模型升级或跨机器容灾。Windows / Python 3.14.3 和 Windows PowerShell 5.1 的验证结果、真实服务核验范围及未完成事项见 [当前进度](docs/STATUS.md)。GitHub CI 已配置 Windows/Linux 测试，本轮未核验远端运行结果。
+存在图形界面源码，但尚未通过用户验收；尚无开机自启守护服务、远程计算集群、自动根因判断、无人值守全自动模型升级或跨机器容灾。历史验证及未完成事项见 [当前进度](docs/STATUS.md)。CI 定义保留为 `.github/workflows/tests.yml.disabled`，不会自动运行；本次封存没有重新执行测试。
 
 常见问题：
 
@@ -250,13 +250,7 @@ API 发送的是目标、验收、作业摘要及匹配经验，**不会自动�
 
 ## GitHub 仓库
 
-仓库预定名称为 `ccaw-workflow`，默认私有。当前会话若尚不能创建远端，可以在本机安装 Git 和 GitHub CLI、完成 `gh auth login` 后执行：
-
-```powershell
-.\scripts\Publish-GitHub.ps1
-```
-
-脚本先核对登录账号和 Git 作者，只提交列出的产品源码目录，然后创建私有仓库并推送。不会替换已存在的 origin；远端操作部分失败时应先检查实际仓库状态。仓库是否已创建，以 GitHub 返回的实际链接为准。
+本仓库保存脱敏的未完成原型。历史建仓脚本 `scripts/Publish-GitHub.ps1` 不应直接用于现有工作目录：它可能暂存整个文档目录并提交已有暂存内容；使用前请自行检查目标、文件范围和 Git 状态。
 
 执行与文本 API 文档核对日期：2026-10-26；额度读取协议和本机 schema 核对日期：2026-10-27。参考 [Codex 非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)、[Codex app-server](https://learn.chatgpt.com/docs/app-server) 和 [DeepSeek Chat Completions](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
