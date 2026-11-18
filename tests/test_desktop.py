@@ -82,6 +82,83 @@ class DesktopServiceTests(unittest.TestCase):
         with closing(Store(self.home)) as store:
             self.assertEqual(len(store.rows("SELECT * FROM jobs")), 1)
 
+    def test_script_dispatch_reuses_the_key_and_does_not_retry_unknown(self):
+        task = self.task("script")
+        same_project = self.task("script")
+        command = [sys.executable, "-c", "print('with spaces')", ""]
+        with patch("ccaw.desktop.start", side_effect=lambda store, identity: store.get("jobs", identity)) as launch:
+            job = self.service.start_script(task["id"], command, "first")
+            self.assertEqual(json.loads(job["command"]), command)
+            self.assertEqual(self.service.snapshot()["jobs"][0]["dedupe_key"], "first")
+            with closing(Store(self.home)) as store:
+                store.db.execute("UPDATE jobs SET status='UNKNOWN' WHERE id=?", (job["id"],))
+            original = self.service.start_script(task["id"], command, "first")
+            self.assertEqual((original["id"], original["status"]), (job["id"], "UNKNOWN"))
+            for blocked_task in (task, same_project):
+                with self.assertRaisesRegex(WorkflowError, job["id"]):
+                    self.service.start_script(blocked_task["id"], command, "second")
+        self.assertEqual(launch.call_count, 1)
+        self.assertEqual(len(self.service.snapshot()["jobs"]), 1)
+
+    def test_script_dispatch_rejects_invalid_argument_vectors_before_enqueue(self):
+        task = self.task("script")
+        for command in ("python", [], [" "], [sys.executable, 5], [sys.executable, "\0"]):
+            with self.subTest(command=command), self.assertRaises(WorkflowError):
+                self.service.start_script(task["id"], command, "first")
+        self.assertEqual(self.service.snapshot()["jobs"], [])
+
+    def test_success_requires_explicit_acceptance_and_reopen_reads_evidence(self):
+        task = self.task("script")
+        command = [sys.executable, "-V"]
+        with closing(Store(self.home)) as store:
+            job, _ = enqueue(store, task["id"], "script", command=command, key="first")
+            finish(store, job["id"], "SUCCEEDED", 0)
+        before = self.service.task_details(task["id"])
+        self.assertEqual(before["task"]["status"], "VERIFYING")
+        self.assertIsNone(before["acceptance_event"])
+        with self.assertRaises(WorkflowError):
+            self.service.accept_task(task["id"], job["id"], " ")
+        accepted = self.service.accept_task(task["id"], job["id"], "已读 stdout.log")
+        duplicate = self.service.accept_task(task["id"], job["id"], "不覆盖第一次记录")
+        self.assertEqual(accepted, duplicate)
+        reopened = DesktopService(self.home, self.project).task_details(task["id"])
+        self.assertEqual(reopened["task"]["status"], "DONE")
+        self.assertEqual(reopened["acceptance_event"]["job_id"], job["id"])
+        self.assertEqual(reopened["acceptance_event"]["payload"], {"evidence": "已读 stdout.log"})
+        with self.assertRaises(WorkflowError):
+            self.service.start_script(task["id"], command, "second")
+        self.assertEqual(self.service.start_script(task["id"], command, "first")["id"], job["id"])
+        self.assertEqual(len(self.service.snapshot()["jobs"]), 1)
+
+    def test_acceptance_rejects_foreign_failed_or_unresolved_jobs(self):
+        task = self.task("script")
+        another = self.task("script")
+        command = [sys.executable, "-V"]
+        with closing(Store(self.home)) as store:
+            foreign, _ = enqueue(store, another["id"], "script", command=command)
+            finish(store, foreign["id"], "SUCCEEDED", 0)
+            failed, _ = enqueue(store, task["id"], "script", command=command, key="failed")
+            finish(store, failed["id"], "FAILED", 1)
+        for unsuitable in (foreign, failed):
+            with self.assertRaises(WorkflowError):
+                self.service.accept_task(task["id"], unsuitable["id"], "核对")
+        with closing(Store(self.home)) as store:
+            succeeded, _ = enqueue(store, task["id"], "script", command=command, key="succeeded")
+            finish(store, succeeded["id"], "SUCCEEDED", 0)
+            unresolved, _ = enqueue(store, task["id"], "script", command=command, key="unresolved")
+            store.db.execute("UPDATE jobs SET status='UNKNOWN' WHERE id=?", (unresolved["id"],))
+        with self.assertRaises(WorkflowError):
+            self.service.accept_task(task["id"], succeeded["id"], "核对")
+        self.assertIsNone(self.service.task_details(task["id"])["acceptance_event"])
+
+    def test_read_back_legacy_acceptance_without_a_job(self):
+        task = self.task("chat")
+        with closing(Store(self.home)) as store:
+            store.accept_task(task["id"], "人工已核对")
+        event = self.service.task_details(task["id"])["acceptance_event"]
+        self.assertIsNone(event["job_id"])
+        self.assertEqual(event["payload"], {"evidence": "人工已核对"})
+
     def test_configuration_saves_revision_and_rejects_stale_hash(self):
         original = self.service.configuration()
         candidate = copy.deepcopy(original["config"])

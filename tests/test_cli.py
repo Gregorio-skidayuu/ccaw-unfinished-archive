@@ -148,6 +148,50 @@ class CliTests(unittest.TestCase):
         self.assertEqual(diagnostics["recent_events"][-1]["payload"]["detail"], "可核对的失败原因")
         self.assertIn("检查", diagnostics["next_action"])
 
+    def test_compact_handoff_keeps_recent_jobs_success_evidence_and_explicit_resume(self):
+        self.assertEqual(self.call("init")[0], 0)
+        store = Store(self.home)
+        try:
+            task = store.create_task("接续实验", "核对已有成果", "找到成功日志", self.base, [],
+                                     "code", "low", "low", "default")
+            task_id = task["id"]
+            original, _ = enqueue(store, task_id, "codex", key="original")
+            store.db.execute("UPDATE jobs SET session_id=? WHERE id=?", ("original-session", original["id"]))
+            finish(store, original["id"], "WAITING_CAPACITY", 1)
+            script = [sys.executable, "-V"]
+            evidence, _ = enqueue(store, task_id, "script", command=script, key="evidence")
+            finish(store, evidence["id"], "SUCCEEDED", 0)
+            failures = []
+            for index in range(10):
+                job, _ = enqueue(store, task_id, "script", command=script, key=f"attempt-{index}")
+                finish(store, job["id"], "FAILED", 1)
+                failures.append(job["id"])
+            resumed, _ = enqueue(store, task_id, "codex", key="resume", resume_job=original["id"], prompt="接续")
+            self.assertEqual(resumed["session_id"], "original-session")
+            self.assertIn(original["id"], resumed["prompt"])
+            self.assertIn(evidence["id"], resumed["prompt"])
+            self.assertNotIn(failures[0], resumed["prompt"])
+            self.assertTrue(all(job_id in resumed["prompt"] for job_id in failures[-8:]))
+        finally:
+            store.close()
+
+        code, compact, error = self.call("task", "export", task_id, "--compact")
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn("核对已有成果", compact)
+        self.assertIn("找到成功日志", compact)
+        self.assertIn(evidence["id"], compact)
+        self.assertIn(resumed["id"], compact)
+        self.assertIn(failures[-1], compact)
+        self.assertNotIn(failures[0], compact)
+        self.assertIn("另有 4 条早期作业", compact)
+        self.assertIn(f"task show {task_id}", compact)
+        code, full, error = self.call("task", "export", task_id)
+        self.assertEqual((code, error), (0, ""))
+        self.assertIn(failures[0], full)
+        code, shown, error = self.call("task", "show", task_id)
+        self.assertEqual((code, error), (0, ""))
+        self.assertEqual(len(json.loads(shown)["jobs"]), 13)
+
 
 if __name__ == "__main__":
     unittest.main()

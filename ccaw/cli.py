@@ -13,7 +13,7 @@ from . import __version__
 from .config import DEFAULT_CONFIG, WorkflowError, atomic_write, fingerprint, load, route, save_version, validate
 from .context import render_packet, task_packet
 from .runner import ACTIVE, cancel, continuation, enqueue, finish, reconcile, start, wait_for
-from .store import Store, now
+from .store import Store
 
 
 def output(value):
@@ -54,6 +54,7 @@ def parser():
     show.add_argument("id")
     export = task.add_parser("export", help="导出 Markdown 任务交接包")
     export.add_argument("id")
+    export.add_argument("--compact", action="store_true", help="只带近期作业、最近成功和仍需核对的作业")
     export.add_argument("--out", help="新建 Markdown 文件；不指定则直接打印")
     done = task.add_parser("done", help="凭验收证据确认任务完成")
     done.add_argument("id")
@@ -269,7 +270,7 @@ def execute(args):
             elif args.action == "show":
                 output(task_packet(store, args.id))
             elif args.action == "export":
-                text = render_packet(task_packet(store, args.id))
+                text = render_packet(task_packet(store, args.id), compact=args.compact)
                 if args.out:
                     if Path(args.out).exists():
                         raise WorkflowError("导出目标已存在；请使用新文件名，避免覆盖。")
@@ -278,13 +279,7 @@ def execute(args):
                 else:
                     print(text)
             elif args.action == "done":
-                with store.transaction():
-                    store.get("tasks", args.id)
-                    if store.db.execute("SELECT id FROM jobs WHERE task_id=? AND status IN ('QUEUED','STARTING','RUNNING','UNKNOWN')", (args.id,)).fetchone():
-                        raise WorkflowError("还有未完成或待核对作业，不能验收完成。")
-                    store.db.execute("UPDATE tasks SET status='DONE',updated_at=? WHERE id=?", (now(), args.id))
-                    store.event("task.accepted", {"evidence": args.evidence}, task=args.id)
-                output(store.get("tasks", args.id))
+                output(store.accept_task(args.id, args.evidence))
         elif args.command == "job":
             if args.action == "list":
                 output(store.rows("SELECT id,task_id,kind,status,session_id,exit_code,error_kind FROM jobs ORDER BY created_at DESC"))

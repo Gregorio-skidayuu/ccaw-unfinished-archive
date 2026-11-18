@@ -1,6 +1,7 @@
 """Local desktop operations over the existing workflow ledger and runner."""
 import copy
 from contextlib import closing
+import json
 import os
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from .config import DEFAULT_CONFIG, WorkflowError, atomic_write, fingerprint, lo
 from .context import render_packet, task_packet
 from .runner import cancel, continuation, enqueue, reconcile, start
 from .store import Store
+
+
+DISPATCHABLE_TASK_STATES = ("READY", "FAILED", "CANCELLED")
 
 
 class DesktopService:
@@ -33,8 +37,11 @@ class DesktopService:
         with closing(Store(self.home)) as store:
             for job in store.rows("SELECT id FROM jobs WHERE status IN ('STARTING','RUNNING')"):
                 reconcile(store, job["id"])
-            tasks = store.rows("SELECT * FROM tasks ORDER BY created_at DESC,rowid DESC")
-            jobs = store.rows("SELECT id,task_id,kind,cwd,status,session_id,exit_code,error_kind,created_at,updated_at FROM jobs ORDER BY created_at DESC,rowid DESC")
+            with store.db:
+                store.db.execute("BEGIN")
+                tasks = store.rows("SELECT * FROM tasks ORDER BY created_at DESC,rowid DESC")
+                jobs = store.rows("SELECT id,task_id,kind,cwd,status,dedupe_key,session_id,exit_code,error_kind,"
+                                  "created_at,updated_at FROM jobs ORDER BY created_at DESC,rowid DESC")
         config = load(self.home)
         return {"tasks": tasks, "jobs": jobs, "config": config, "config_hash": fingerprint(config),
                 "home": str(self.home), "project": str(self.project)}
@@ -53,11 +60,44 @@ class DesktopService:
 
     def task_details(self, task_id):
         with closing(Store(self.home)) as store:
-            return task_packet(store, task_id)
+            packet = task_packet(store, task_id)
+            packet["acceptance_event"] = None
+            if packet["task"]["status"] == "DONE":
+                events = store.rows(
+                    "SELECT id,job_id,kind,payload,created_at FROM events WHERE task_id=? AND kind='task.accepted' "
+                    "ORDER BY id DESC LIMIT 1",
+                    (task_id,),
+                )
+                if events:
+                    event = events[0]
+                    event["payload"] = json.loads(event["payload"])
+                    packet["acceptance_event"] = event
+            return packet
 
     def job_details(self, job_id):
         with closing(Store(self.home)) as store:
             return job_details(store, job_id)
+
+    def accept_task(self, task_id, job_id, evidence):
+        if not job_id:
+            raise WorkflowError("请选择已核对的成功作业。")
+        with closing(Store(self.home)) as store:
+            return store.accept_task(task_id, evidence, job_id=job_id)
+
+    def start_script(self, task_id, command, key):
+        if not isinstance(key, str) or not key.strip():
+            raise WorkflowError("请填写本次执行的阶段键；同阶段使用同一键可避免重复启动。")
+        if (
+            not isinstance(command, (list, tuple))
+            or not command
+            or any(not isinstance(argument, str) or "\0" in argument for argument in command)
+            or not command[0].strip()
+        ):
+            raise WorkflowError("请填写可执行程序，并将每个参数作为独立的文本传入。")
+        with closing(Store(self.home)) as store:
+            job, _ = enqueue(store, task_id, "script", command=command, key=key.strip(),
+                             allowed_task_states=DISPATCHABLE_TASK_STATES)
+            return start(store, job["id"]) if job["status"] == "QUEUED" else job
 
     def start_agent(self, task_id, role, prompt, key, auto_resume=False, allow_api=False):
         if not isinstance(key, str) or not key.strip():
@@ -67,7 +107,8 @@ class DesktopService:
             if task["kind"] == "chat":
                 raise WorkflowError("基础对话使用 ChatGPT 免费网页入口；请复制任务包并在 ChatGPT 中继续。")
             job, _ = enqueue(store, task_id, "codex", role=role, prompt=prompt, key=key.strip(),
-                             auto_resume=auto_resume, allow_api=allow_api)
+                             auto_resume=auto_resume, allow_api=allow_api,
+                             allowed_task_states=DISPATCHABLE_TASK_STATES)
             return start(store, job["id"]) if job["status"] == "QUEUED" else job
 
     def job_action(self, job_id, action):

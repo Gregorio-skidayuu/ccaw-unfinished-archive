@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>CCAW · 本地工作台</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="rail">
+      <div class="brand">CCAW</div>
+      <nav aria-label="任务筛选">
+        <button type="button" data-filter="all" aria-current="page">工作台 <span></span></button>
+        <button type="button" data-filter="attention">需处理 <span></span></button>
+        <button type="button" data-filter="review">待验收 <span></span></button>
+        <button type="button" data-filter="active">执行中 <span></span></button>
+        <button type="button" data-filter="done">已完成 <span></span></button>
+      </nav>
+      <div class="ledger"><strong>本地账本</strong><span id="ledger-path"></span></div>
+    </aside>
+
+    <main>
+      <header class="toolbar">
+        <div>
+          <h1 id="page-title">工作台</h1>
+          <p id="notice" role="status" class="notice">正在读取本地账本…</p>
+        </div>
+        <div class="actions">
+          <button type="button" id="refresh">刷新</button>
+          <button type="button" class="primary" id="new-task" disabled>新建任务</button>
+        </div>
+      </header>
+
+      <section id="board" aria-labelledby="page-title"></section>
+      <section id="detail" hidden aria-labelledby="task-title">
+        <button type="button" class="link" id="back">← 返回任务列表</button>
+        <div class="detail-header">
+          <span id="task-state" class="pill"></span>
+          <h2 id="task-title"></h2>
+        </div>
+        <div class="detail-grid">
+          <article class="panel">
+            <h3>目标</h3>
+            <p id="task-goal"></p>
+            <h3>验收条件</h3>
+            <p id="task-acceptance"></p>
+            <div id="accepted" hidden>
+              <h3>验收记录</h3>
+              <p id="acceptance-record"></p>
+            </div>
+          </article>
+          <div>
+            <article class="panel next">
+              <h3>下一步</h3>
+              <p id="next-step"></p>
+              <div class="actions">
+                <button type="button" class="primary" id="primary-action"></button>
+                <button type="button" id="new-attempt" hidden>新阶段…</button>
+              </div>
+            </article>
+            <article class="panel">
+              <h3>作业</h3>
+              <div id="job-list"></div>
+            </article>
+          </div>
+        </div>
+        <div class="task-project" id="task-project"></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="task-dialog" aria-labelledby="create-title">
+    <div class="dialog-header"><h2 id="create-title">新建任务</h2><button type="button" data-close>关闭</button></div>
+    <form id="task-form">
+      <label>任务名称 <input name="title" required maxlength="512" autofocus></label>
+      <label>工作目录 <input name="project" required spellcheck="false"></label>
+      <label>任务类型 <select name="kind"><option value="script">脚本计算</option><option value="code">Codex 工程任务</option></select></label>
+      <label>目标 <textarea name="goal" rows="2" maxlength="12000"></textarea></label>
+      <label>验收条件 <textarea name="acceptance" rows="3" required maxlength="12000"></textarea></label>
+      <p class="form-error" role="alert"></p>
+      <div class="actions end"><button class="primary" id="save-task">创建任务</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="run-dialog" aria-labelledby="run-title">
+    <div class="dialog-header"><h2 id="run-title">运行本地脚本</h2><button type="button" data-close>关闭</button></div>
+    <form id="run-form">
+      <fieldset id="script-fields">
+        <label>可执行文件 <input name="executable" required spellcheck="false"></label>
+        <label>参数 <span class="hint">每行一个参数。路径含空格时也填写在同一行。</span>
+          <textarea name="arguments" rows="4" spellcheck="false"></textarea>
+        </label>
+      </fieldset>
+      <fieldset id="codex-fields" hidden disabled>
+        <label>执行角色 <select name="role"><option value="default">主力</option><option value="economy">经济</option><option value="expert">专家</option></select></label>
+        <label>本次执行指令 <textarea name="prompt" rows="4" required maxlength="12000"></textarea></label>
+        <label class="checkbox"><input type="checkbox" name="auto_resume"> 允许在订阅额度恢复后接续原 Codex session</label>
+      </fieldset>
+      <label>阶段键 <span class="hint">同一阶段使用相同的键和参数，系统会复用原作业。</span>
+        <input name="key" required maxlength="100" spellcheck="false">
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="actions end"><button class="primary" id="start-job">启动脚本</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="job-dialog" class="wide" aria-labelledby="job-heading">
+    <div class="dialog-header"><h2 id="job-heading">作业证据</h2><button type="button" data-close>关闭</button></div>
+    <div class="job-status"><strong id="job-state"></strong><span id="job-title"></span></div>
+    <p id="job-hint"></p>
+    <div class="actions" id="job-files"></div>
+    <pre id="log-preview" tabindex="0"></pre>
+    <p class="form-error" role="alert"></p>
+    <div class="actions" id="job-operations">
+      <button type="button" id="recheck-job">重新核对</button>
+      <button type="button" id="open-project">打开项目目录</button>
+      <button type="button" id="open-run">打开作业目录</button>
+      <button type="button" class="primary" id="accept-job" hidden>确认验收</button>
+    </div>
+  </dialog>
+
+  <dialog id="accept-dialog" aria-labelledby="accept-title">
+    <div class="dialog-header"><h2 id="accept-title">确认验收</h2><button type="button" data-close>关闭</button></div>
+    <p id="accept-criteria"></p>
+    <form id="accept-form">
+      <label>验收证据 <span class="hint">填写你核对过的文件、输出或结论。</span>
+        <textarea name="evidence" rows="5" required maxlength="16000" autofocus></textarea>
+      </label>
+      <p class="form-error" role="alert"></p>
+      <div class="actions end"><button id="save-acceptance" class="primary">保存验收</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

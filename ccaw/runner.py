@@ -11,23 +11,21 @@ import time
 from . import __version__
 from .capacity import AutoResumeSetupError
 from .config import WorkflowError, canonical, fingerprint, load
-from .context import render_packet, task_packet
+from .context import load_task_context, packet_with_jobs, render_packet
 from .processes import detached_options, identity, same_process, terminate
 from .providers import APIExecutionUncertain, api_reservation, call_api, classify_error, codex_command, subscription_environment
-from .store import Store, now, uid
+from .store import ACTIVE_JOB_STATES, Store, now, uid
 
 
-ACTIVE = ("QUEUED", "STARTING", "RUNNING", "UNKNOWN")
+ACTIVE = ACTIVE_JOB_STATES
 TERMINAL = ("SUCCEEDED", "FAILED", "CANCELLED", "WAITING_CAPACITY")
 
 
 def enqueue(store, task_id, kind, command=None, prompt="", role=None, key="main", resume_job=None,
             then_prompt=None, then_role="default", allow_api=False, auto_resume=False,
-            capacity_parent=None, capacity_cycle=None, capacity_account=None):
-    task = store.get("tasks", task_id)
-    config = load(store.root)
-    packet = task_packet(store, task_id)
-    full_prompt = render_packet(packet) + "\n## 本次执行指令\n" + prompt if kind != "script" else None
+            capacity_parent=None, capacity_cycle=None, capacity_account=None, allowed_task_states=None):
+    task, config, lessons = load_task_context(store, task_id)
+    full_prompt = None
     role = role or task["role"]
     session = None
     if resume_job:
@@ -61,8 +59,11 @@ def enqueue(store, task_id, kind, command=None, prompt="", role=None, key="main"
         raise WorkflowError("接续角色无效。")
     if then_prompt and config["roles"][then_role]["backend"] != "codex":
         raise WorkflowError("自动接续目前仅支持 Codex；付费 API 需独立明确授权。")
+    if kind != "script":
+        packet = packet_with_jobs(store, task, lessons)
+        full_prompt = render_packet(packet, compact=True, resume_job=resume_job) + "\n## 本次执行指令\n" + prompt
     snapshot = {"config": config, "config_hash": fingerprint(config), "version": __version__,
-                "role": role, "lesson_versions": [{"id": x["id"], "version": x["version"]} for x in packet["lessons"]]}
+                "role": role, "lesson_versions": [{"id": x["id"], "version": x["version"]} for x in lessons]}
     specification = {"kind": kind, "command": command or [], "cwd": task["project"], "prompt": prompt,
                      "role": role, "session": session, "then_prompt": then_prompt, "then_role": then_role}
     if capacity_parent:
@@ -87,6 +88,10 @@ def enqueue(store, task_id, kind, command=None, prompt="", role=None, key="main"
         active = store.db.execute("SELECT id FROM jobs WHERE cwd=? AND status IN ('QUEUED','STARTING','RUNNING','UNKNOWN')", (task["project"],)).fetchone()
         if active:
             raise WorkflowError(f"项目已有未完成或待核对作业 {active['id']}；当前版本串行执行同项目。")
+        if allowed_task_states is not None:
+            current = store.get("tasks", task_id)
+            if current["status"] not in allowed_task_states:
+                raise WorkflowError("任务状态已变化，请刷新后按当前状态处理。")
         store.db.execute("INSERT INTO jobs(id,task_id,dedupe_key,kind,command,cwd,status,snapshot,prompt,session_id,continuation_prompt,continuation_role,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (identity_, task_id, key, kind, canonical(command or []), task["project"], "QUEUED",
                           canonical(snapshot), full_prompt, session, then_prompt, then_role, timestamp, timestamp))

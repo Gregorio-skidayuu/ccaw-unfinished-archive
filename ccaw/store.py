@@ -8,6 +8,9 @@ from pathlib import Path
 from .config import WorkflowError, canonical
 
 
+ACTIVE_JOB_STATES = ("QUEUED", "STARTING", "RUNNING", "UNKNOWN")
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -118,6 +121,27 @@ class Store:
                         (identity, title, goal, acceptance, project, canonical(tags), kind, risk, complexity, role, timestamp, timestamp))
         self.event("task.created", {"role": role}, task=identity)
         return self.get("tasks", identity)
+
+    def accept_task(self, task_id, evidence, *, job_id=None):
+        with self.transaction():
+            task = self.get("tasks", task_id)
+            if self.db.execute(
+                "SELECT id FROM jobs WHERE task_id=? AND status IN ('QUEUED','STARTING','RUNNING','UNKNOWN')",
+                (task_id,),
+            ).fetchone():
+                raise WorkflowError("还有未完成或待核对作业，不能验收完成。")
+            if job_id is not None:
+                job = self.get("jobs", job_id)
+                if job["task_id"] != task_id or job["status"] != "SUCCEEDED":
+                    raise WorkflowError("请选择本任务中执行成功的作业作为验收依据。")
+                if not isinstance(evidence, str) or not evidence.strip():
+                    raise WorkflowError("请填写已核对的成果或日志证据。")
+                if task["status"] == "DONE":
+                    return task
+                evidence = evidence.strip()
+            self.db.execute("UPDATE tasks SET status='DONE',updated_at=? WHERE id=?", (now(), task_id))
+            self.event("task.accepted", {"evidence": evidence}, task=task_id, job=job_id)
+            return self.get("tasks", task_id)
 
     def record_incident(self, task_id, signature, description, evidence):
         task = self.get("tasks", task_id)

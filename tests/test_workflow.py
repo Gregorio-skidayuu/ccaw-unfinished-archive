@@ -216,8 +216,19 @@ class WorkflowTests(unittest.TestCase):
             self.store.verify_lesson(lesson["id"], old_check["id"])
         check = self.run_script(task, key="regression")
         self.store.verify_lesson(lesson["id"], check["id"])
-        self.store.set_lesson_status(lesson["id"], "ACTIVE")
+        active_lesson = self.store.set_lesson_status(lesson["id"], "ACTIVE")
         self.assertEqual(len(task_packet(self.store, task["id"])["lessons"]), 1)
+        statements = []
+        self.store.db.set_trace_callback(statements.append)
+        try:
+            job, _ = enqueue(self.store, task["id"], "script", command=[sys.executable, "-V"], key="with-lesson")
+        finally:
+            self.store.db.set_trace_callback(None)
+        snapshot = json.loads(job["snapshot"])
+        self.assertEqual(snapshot["config"], self.config)
+        self.assertEqual(snapshot["lesson_versions"], [{"id": active_lesson["id"], "version": active_lesson["version"]}])
+        self.assertIsNone(job["prompt"])
+        self.assertFalse(any("FROM jobs WHERE task_id=" in sql and "dedupe_key" not in sql for sql in statements))
         other = self.base / "other-project"
         other.mkdir()
         self.assertEqual(self.store.match_lessons(str(other), ["recovery"], 5), [])
